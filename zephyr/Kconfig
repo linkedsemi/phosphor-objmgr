@@ -1,0 +1,3 @@
+
+config OPENBMC_PHOSPHOR_OBJMGR
+    bool "openbmc phosphor object manager"

@@ -382,7 +382,7 @@ void removeUnneededParents(const std::string& objectPath,
     }
 }
 
-int main()
+int objmgr_main()
 {
     boost::asio::io_context io;
     std::shared_ptr<sdbusplus::asio::connection> systemBus =

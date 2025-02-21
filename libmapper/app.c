@@ -234,7 +234,7 @@ finish:
     exit(r < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
 }
 
-int main(int argc, char* argv[])
+int mapper_wait(int argc, char* argv[])
 {
     static const char* usage =
         "Usage: %s {COMMAND} ...\n"
