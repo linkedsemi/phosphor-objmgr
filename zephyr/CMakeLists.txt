@@ -12,11 +12,10 @@ if(CONFIG_OPENBMC_PHOSPHOR_OBJMGR)
     )
 
     zephyr_library_include_directories(${ZEPHYR_CURRENT_MODULE_DIR}/src)
-    zephyr_export_include_directories(${ZEPHYR_CURRENT_MODULE_DIR}/libmapper)
+    zephyr_include_directories(${ZEPHYR_CURRENT_MODULE_DIR}/libmapper)
 
     zephyr_library_link_libraries(boost)
     zephyr_library_link_libraries(tinyxml2)
-    zephyr_library_link_libraries(sd-bus)
     zephyr_library_link_libraries(sdbusplus)
     zephyr_library_link_libraries(phosphor-dbus-interfaces)
 endif()
