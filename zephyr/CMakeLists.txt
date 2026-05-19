@@ -11,8 +11,11 @@ if(CONFIG_OPENBMC_PHOSPHOR_OBJMGR)
         ${ZEPHYR_CURRENT_MODULE_DIR}/src/main.cpp
     )
 
-    zephyr_library_include_directories(${ZEPHYR_CURRENT_MODULE_DIR}/src)
-    zephyr_include_directories(${ZEPHYR_CURRENT_MODULE_DIR}/libmapper)
+    zephyr_library_include_directories(
+        ${ZEPHYR_CURRENT_MODULE_DIR}/src
+        ${ZEPHYR_CURRENT_MODULE_DIR}/libmapper
+        )
+    zephyr_export_include_directories(${ZEPHYR_CURRENT_MODULE_DIR}/libmapper)
 
     zephyr_library_link_libraries(boost)
     zephyr_library_link_libraries(tinyxml2)
