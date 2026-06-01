@@ -9,6 +9,7 @@ if(CONFIG_OPENBMC_PHOSPHOR_OBJMGR)
         ${ZEPHYR_CURRENT_MODULE_DIR}/src/handler.cpp
         ${ZEPHYR_CURRENT_MODULE_DIR}/src/processing.cpp
         ${ZEPHYR_CURRENT_MODULE_DIR}/src/main.cpp
+        # ${ZEPHYR_CURRENT_MODULE_DIR}/src/test_objmgr.cpp
     )
 
     zephyr_library_include_directories(

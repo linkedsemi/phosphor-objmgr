@@ -20,8 +20,15 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include "task_def.hpp"
 
+#ifdef __ZEPHYR__
+#include "dbus_broker.h"
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(OBJMGR, LOG_LEVEL_INF);
+#endif
 AssociationMaps associationMaps;
+extern struct k_sem objmgr_ready_sem;
 
 void updateOwners(sdbusplus::asio::connection* conn,
                   boost::container::flat_map<std::string, std::string>& owners,
@@ -385,15 +392,30 @@ void removeUnneededParents(const std::string& objectPath,
 int objmgr_main()
 {
     boost::asio::io_context io;
+    LOG_DBG("enter objmgr_main");
+#ifdef __ZEPHYR__
+    sd_bus* bus = nullptr;
+    int rc = connect_to_dbroker(&bus);
+    if (rc < 0) {
+        LOG_INF("connect_to_dbroker failed, rc=%d", rc);
+        return rc;
+    }
+    LOG_INF("connected to dbroker");
+    auto systemBus = std::make_shared<sdbusplus::asio::connection>(io, bus);
+    systemBus->request_name("xyz.openbmc_project.ObjectMapper");
+#else
     std::shared_ptr<sdbusplus::asio::connection> systemBus =
         std::make_shared<sdbusplus::asio::connection>(io);
+#endif
 
     sdbusplus::asio::object_server server(systemBus);
 
+#ifndef __ZEPHYR__
     // Construct a signal set registered for process termination.
     boost::asio::signal_set signals(io, SIGINT, SIGTERM);
     signals.async_wait(
         [&io](const boost::system::error_code&, int) { io.stop(); });
+#endif
 
     InterfaceMapType interfaceMap;
     boost::container::flat_map<std::string, std::string> nameOwners;
@@ -569,24 +591,25 @@ int objmgr_main()
         server.add_interface("/xyz/openbmc_project/object_mapper",
                              "xyz.openbmc_project.ObjectMapper");
 
+    LOG_DBG("register GetAncestors");
     iface->register_method(
         "GetAncestors", [&interfaceMap](std::string& reqPath,
                                         std::vector<std::string>& interfaces) {
             return getAncestors(interfaceMap, reqPath, interfaces);
         });
-
+    LOG_DBG("register GetObject");
     iface->register_method(
         "GetObject", [&interfaceMap](const std::string& path,
                                      std::vector<std::string>& interfaces) {
             return getObject(interfaceMap, path, interfaces);
         });
-
+    LOG_DBG("register GetSubTree");
     iface->register_method(
         "GetSubTree", [&interfaceMap](std::string& reqPath, int32_t depth,
                                       std::vector<std::string>& interfaces) {
             return getSubTree(interfaceMap, reqPath, depth, interfaces);
         });
-
+    LOG_DBG("register GetSubTreePaths");
     iface->register_method(
         "GetSubTreePaths",
         [&interfaceMap](std::string& reqPath, int32_t depth,
@@ -594,6 +617,7 @@ int objmgr_main()
         return getSubTreePaths(interfaceMap, reqPath, depth, interfaces);
         });
 
+    LOG_DBG("register GetAssociatedSubTree");
     iface->register_method(
         "GetAssociatedSubTree",
         [&interfaceMap](const sdbusplus::message::object_path& associationPath,
@@ -604,6 +628,7 @@ int objmgr_main()
                                     interfaces);
         });
 
+    LOG_DBG("register GetAssociatedSubTreePaths");
     iface->register_method(
         "GetAssociatedSubTreePaths",
         [&interfaceMap](const sdbusplus::message::object_path& associationPath,
@@ -619,9 +644,19 @@ int objmgr_main()
     io.post([&]() {
         doListNames(io, interfaceMap, systemBus.get(), nameOwners,
                     associationMaps, server);
+        k_sem_give(&objmgr_ready_sem);
     });
 
-    systemBus->request_name("xyz.openbmc_project.ObjectMapper");
-
-    io.run();
+    LOG_INF("init finished");
+    for (;;) {
+        try {
+            io.run();
+            break;
+        } catch (const std::exception& e) {
+            LOG_ERR("Exception in io.run(), restarting: %s", e.what());
+        } catch (...) {
+            LOG_ERR("Unknown exception in io.run(), restarting");
+        }
+    }
+    return 0;
 }
