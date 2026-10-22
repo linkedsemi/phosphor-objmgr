@@ -7,6 +7,7 @@
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/container/flat_map.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
@@ -17,6 +18,7 @@
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -141,24 +143,82 @@ void doAssociations(boost::asio::io_context& io,
                     InterfaceMapType& interfaceMap,
                     sdbusplus::asio::object_server& objectServer,
                     const std::string& processName, const std::string& path,
-                    int timeoutRetries = 0)
+                    int retries = 0)
 {
-    constexpr int maxTimeoutRetries = 3;
+    /* Retry every failure, not just timeouts, and back off before doing so.
+     *
+     * An object publishes its Associations property *after* the
+     * InterfacesAdded that woke us up: PSUSensor registers it from a
+     * GetSubTree callback (PSUSensor.cpp:107 -> Utils.cpp:643), while we are
+     * already answering that InterfacesAdded. A Get issued immediately loses
+     * that race and comes back UnknownObject, and because associationChanged()
+     * is never reached the <path>/inventory and <path>/all_sensors endpoint
+     * objects are never created -- which is what bmcweb reads to locate a
+     * sensor and derive its Status/Health/IndicatorLED (redfish-core/lib/
+     * sensors.hpp:453 and :1184).
+     *
+     * Note the PropertiesChanged match is not a substitute: it does fire when
+     * the property is finally registered, but associationChanged() parks the
+     * entry as pending whenever the far endpoint is not in interfaceMap yet
+     * (associations.cpp:253), so the wake-up alone does not complete it. */
+    constexpr int maxRetries = 3;
+    constexpr std::chrono::milliseconds retryDelay{150};
+
     systemBus->async_method_call(
         [&io, &objectServer, path, processName, &interfaceMap, systemBus,
-         timeoutRetries](
+         retries, retryDelay](
             const boost::system::error_code ec,
             const std::variant<std::vector<Association>>& variantAssociations) {
         if (ec)
         {
-            if (ec.value() == boost::system::errc::timed_out &&
-                timeoutRetries < maxTimeoutRetries)
+            /* Retry only while the object is still on the bus.
+             *
+             * interfaceMap is what tells the two failure modes apart, and it
+             * does so far more reliably than ec.value() does: this Zephyr port
+             * flattens every sd-bus error onto its errno, so "the property is
+             * not registered yet" and "the object is gone" both surface as the
+             * same number (51) with an empty message. If the path is still in
+             * interfaceMap the object is alive and the property may yet appear,
+             * so waiting is worth it. If it has been dropped -- InterfacesRemoved
+             * erased it -- no amount of waiting helps, and retrying would just
+             * add Get traffic to an object that no longer exists, during
+             * startup when the broker is busiest.
+             *
+             * Either way the object is present in interfaceMap on the first
+             * attempt, because doIntrospect() has just populated it from the
+             * introspection that led here. */
+            if (retries < maxRetries &&
+                interfaceMap.find(path) != interfaceMap.end())
             {
-                doAssociations(io, systemBus, interfaceMap, objectServer,
-                               processName, path, timeoutRetries + 1);
+                /* The timer has to outlive this lambda: a stack one is
+                 * destroyed as soon as the handler returns and takes the
+                 * pending async_wait down with it, so the retry would never
+                 * fire. Hand it to the handler instead. */
+                auto timer =
+                    std::make_shared<boost::asio::steady_timer>(io, retryDelay);
+                timer->async_wait([timer, &io, &objectServer, path, processName,
+                                   &interfaceMap, systemBus, retries](
+                                      const boost::system::error_code&) {
+                    doAssociations(io, systemBus, interfaceMap, objectServer,
+                                   processName, path, retries + 1);
+                });
                 return;
             }
-            std::cerr << "Error getting associations from " << path << "\n";
+            /* Print value() and category(): message() comes out empty for
+             * these. sdbusplus's Zephyr port turns an sd-bus error into a
+             * boost error_code without carrying over a usable category, so
+             * category().message(value()) yields "" and the only thing that
+             * identifies the failure is the numeric code. */
+            std::cerr << "Error getting associations from " << path
+                      << ": ec=" << ec.value()
+                      << " cat=" << ec.category().name()
+                      << " msg='" << ec.message() << "'"
+                      << " (after " << retries + 1 << " attempts)\n";
+            /* Bail out instead of falling through: variantAssociations is
+             * default-constructed on failure, so continuing would hand
+             * associationChanged() an empty list and wipe whatever
+             * associations this path already had. */
+            return;
         }
         std::vector<Association> associations =
             std::get<std::vector<Association>>(variantAssociations);

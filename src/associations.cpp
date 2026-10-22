@@ -266,6 +266,39 @@ void associationChanged(boost::asio::io_context& io,
             objects[objectPath + "/" + reverse].emplace(path);
         }
     }
+
+#ifdef __ZEPHYR__
+    /* Deduplicate: the same (path, owner) reaches associationChanged() from two
+     * independent trigger paths -- doIntrospect() discovering
+     * Association.Definitions, and the PropertiesChanged match on that same
+     * property. Both fire for one newly published sensor, so this function runs
+     * twice back to back with identical input, and the second run re-publishes
+     * every endpoint object -- pointless D-Bus traffic that doubles objmgr's
+     * share of the startup load.
+     *
+     * Compare the derived result rather than the raw property: the same
+     * association set always derives the same objects map, and the derived form
+     * is exactly what assocMaps.owners already holds for this (path, owner).
+     *
+     * Skipping when the two match is safe in every case:
+     *   - both empty        -> the body below is a no-op anyway
+     *   - new empty, old not-> not equal, so removal still runs
+     *   - new not empty     -> equal means nothing changed, so there is nothing
+     *                          to add or remove
+     */
+    {
+        auto ownersIt = assocMaps.owners.find(path);
+        if (ownersIt != assocMaps.owners.end())
+        {
+            auto ownerIt = ownersIt->second.find(owner);
+            if (ownerIt != ownersIt->second.end() && ownerIt->second == objects)
+            {
+                return;
+            }
+        }
+    }
+#endif /* __ZEPHYR__ */
+
     for (const auto& object : objects)
     {
         addEndpointsToAssocIfaces(io, objectServer, object.first, object.second,
