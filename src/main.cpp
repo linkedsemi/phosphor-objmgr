@@ -27,7 +27,7 @@
 #ifdef __ZEPHYR__
 #include "dbus_broker.h"
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(OBJMGR, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(objmgr, LOG_LEVEL_INF);
 #endif
 AssociationMaps associationMaps;
 extern struct k_sem objmgr_ready_sem;
